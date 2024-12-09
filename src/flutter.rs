@@ -2139,6 +2139,7 @@ pub(super) mod async_tasks {
             ("onlines", onlines.join(",")),
             ("offlines", offlines.join(",")),
         ]);
+        log::debug!("handle_query_onlines.data: {:?}", data);
         let _res = super::push_global_event(
             super::APP_TYPE_MAIN,
             serde_json::ser::to_string(&data).unwrap_or("".to_owned()),

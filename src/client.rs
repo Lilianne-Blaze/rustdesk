@@ -3443,8 +3443,8 @@ pub mod peer_online {
             let query_timeout = std::time::Duration::from_millis(3_000);
             match query_online_states_(&ids, query_timeout).await {
                 Ok((onlines, offlines)) => {
-                    log::debug!("Onlines: {:?}", onlines);
-                    log::debug!("Offlines: {:?}", offlines);
+                    log::debug!("query_online_states.onlines: {:?}", onlines);
+                    log::debug!("query_online_states.offlines: {:?}", offlines);
                     f(onlines, offlines);
                 }
                 Err(e) => {
