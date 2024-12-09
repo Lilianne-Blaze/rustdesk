@@ -804,6 +804,20 @@ pub fn is_physical_console_session() -> Option<bool> {
 }
 
 pub fn get_active_username() -> String {
+    // if no user is detected, assume "Default"
+    // in WindowsPE there will typically be
+    // "SYSTEM" account active using
+    // "X:\Users\Default" directory
+    
+    let user = get_active_username_org();
+    if user.is_empty() {
+        return "Default".to_owned();
+    } else {
+        return user;
+    }
+}
+
+fn get_active_username_org() -> String {
     // get_active_user will give console username higher priority
     if let Some(name) = get_current_session_username() {
         return name;
@@ -838,6 +852,20 @@ fn get_current_session_username() -> Option<String> {
 }
 
 fn get_session_username(session_id: u32) -> String {
+    // if no user is detected, assume "Default"
+    // in WindowsPE there will typically be
+    // "SYSTEM" account active using
+    // "X:\Users\Default" directory
+    
+    let user = get_session_username_org(session_id);
+    if user.is_empty() {
+        return "Default".to_owned();
+    } else {
+        return user;
+    }
+}
+
+fn get_session_username_org(session_id: u32) -> String {
     extern "C" {
         fn get_session_user_info(path: *mut u16, n: u32, session_id: u32) -> u32;
     }
@@ -944,10 +972,13 @@ pub fn get_active_user_home() -> Option<PathBuf> {
 }
 
 pub fn is_prelogin() -> bool {
-    let Some(username) = get_current_session_username() else {
-        return false;
-    };
-    username.is_empty() || username == "SYSTEM"
+    // assume there's always a ready session
+    return false;
+    
+    //let Some(username) = get_current_session_username() else {
+    //    return false;
+    //};
+    //username.is_empty() || username == "SYSTEM"
 }
 
 pub fn is_root() -> bool {
