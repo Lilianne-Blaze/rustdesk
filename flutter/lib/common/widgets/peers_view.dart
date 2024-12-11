@@ -145,8 +145,8 @@ class _PeersViewState extends State<_PeersView>
             const Duration(milliseconds: 300)) {
       return;
     }
-    _queryCount = _maxQueryCount;
-    _isActive = false;
+    //_queryCount = _maxQueryCount;
+    //_isActive = false;
   }
 
   @override
@@ -174,7 +174,7 @@ class _PeersViewState extends State<_PeersView>
       _isActive = true;
       _queryCount = 0;
     } else if (state == AppLifecycleState.inactive) {
-      _isActive = false;
+      //_isActive = false;
     }
   }
 
