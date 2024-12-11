@@ -86,7 +86,10 @@ class _PeersView extends StatefulWidget {
 /// State for the peer widget.
 class _PeersViewState extends State<_PeersView>
     with WindowListener, WidgetsBindingObserver {
-  static const int _maxQueryCount = 3;
+
+  // increased from 3 to de-facto infinite
+  static const int _maxQueryCount = 999999999;
+  
   final HashMap<String, String> _emptyMessages = HashMap.from({
     LoadEvent.recent: 'empty_recent_tip',
     LoadEvent.favorite: 'empty_favorite_tip',
@@ -308,7 +311,9 @@ class _PeersViewState extends State<_PeersView>
     return body;
   }
 
-  var _queryInterval = const Duration(seconds: 20);
+  // interval between peer checks on public servers
+  // increased to 70 from 20
+  var _queryInterval = const Duration(seconds: 70);
 
   void _startCheckOnlines() {
     () async {
