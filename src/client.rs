@@ -3443,9 +3443,12 @@ pub mod peer_online {
             let query_timeout = std::time::Duration::from_millis(3_000);
             match query_online_states_(&ids, query_timeout).await {
                 Ok((onlines, offlines)) => {
+                    hbb_common::log::debug!("query_online_states.onlines: {:?}", onlines);
+                    hbb_common::log::debug!("query_online_states.offlines: {:?}", offlines);
                     f(onlines, offlines);
                 }
                 Err(e) => {
+                    hbb_common::log::debug!("query_online_states.err.e: {:?}", &e);
                     log::debug!("query onlines, {}", &e);
                 }
             }
