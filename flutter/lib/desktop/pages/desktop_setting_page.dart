@@ -1855,7 +1855,7 @@ class _AboutState extends State<_About> {
                 height: 8.0,
               ),
               SelectionArea(
-                  child: Text('${translate('Version')}: $version')
+                  child: Text('${translate('Version')}: $version Windows PE support added')
                       .marginSymmetric(vertical: 4.0)),
               SelectionArea(
                   child: Text('${translate('Build Date')}: $buildDate')
@@ -1896,7 +1896,7 @@ class _AboutState extends State<_About> {
                             style: const TextStyle(color: Colors.white),
                           ),
                           Text(
-                            translate('Slogan_tip'),
+                            'Thus do we invoke the Machine God. Thus do we make whole that which was sundered.',
                             style: TextStyle(
                                 fontWeight: FontWeight.w800,
                                 color: Colors.white),
