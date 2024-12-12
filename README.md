@@ -1,3 +1,67 @@
+# Rustdesk - a couple of simple mods
+
+Both mods are meant for admins/technicians, for solving specific
+narrow problems, if you don't understand the descriptions fully
+please don't use them. Also they're not meant to replace unmodded
+versions, use them only when/where their functionality is explicitly needed.
+
+Using them SHOULD be safe, but I can't fully guarantee they will
+be compatible with future Rustdesk versions, or that you won't get
+banned if generating excessive/anomalous traffic.
+
+They're designed to work with public Rustdesk servers, but should
+work with self-hosted ones too.
+
+If you found either one useful consider writing a few words in
+Discussions on how you used them and in what environment.
+
+They're provided as-is, please don't ask questions on how to integrate
+them in Windows PE, what is Windows PE, or how to find and/or parse logs.
+
+
+## Mod 1, branch mod-el, enhanced logging
+https://github.com/Lilianne-Blaze/rustdesk/tree/mod-el
+
+Enhanced logging version. Adds log lines with visible/invisible peers,
+so the log file can be parsed and used in other programs, for alerts,
+availability charts, etc.
+
+Search for file Rustdesk_rCURRENT.log and look for last occurences of
+lines like these:
+
+'[2024-12-12 00:36:37.740466 +01:00] DEBUG [src\client.rs:3446] query_online_states.onlines: ["234325", "34634"]
+[2024-12-12 00:36:37.740665 +01:00] DEBUG [src\client.rs:3447] query_online_states.offlines: ["253325"]'
+
+Note that for now it needs the Rustdesk window to be opened to work, but it can be in background/minimized.
+
+It generates slightly more traffic than the normal version, so don't use it unless you need to,
+and preferably no more than one instance per IP. If you generate anomalously high traffic you
+can get banned. Just use common sense. In the current version it polls the servers every 70 seconds
+so it's not real-time, but close enough. Of course you can lower that interval but it's not
+recommended.
+
+Tested on Windows 10 64-bit, 11 64-bit, and Windows PE 10 64-bit.
+
+## Mod 2, branch mod-wpe, Windows PE support
+https://github.com/Lilianne-Blaze/rustdesk/tree/mod-wpe
+
+Normally when Rustdesk is launched in Windows PE it works only partially,
+desktop control works as normal but file transfer complains about no logged in user.
+
+This mod makes Rustdesk think there's always an active session, so file transfer
+works as normal. It is needed only on WinPE side, the controlling side can use
+unmodded version.
+
+Meant only for use in custom Windows PE media, it's very likely it has
+side effects when used in normal Windows or other systems.
+
+Tested on Windows PE 10 64-bit.
+
+
+## Original README below
+---
+---
+
 <p align="center">
   <img src="res/logo-header.svg" alt="RustDesk - Your remote desktop"><br>
   <a href="#public-servers">Servers</a> •
