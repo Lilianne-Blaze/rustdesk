@@ -1,3 +1,9 @@
+
+// LBCODE changed:
+// assume there's always a session
+// if no user is logged in, fall back to username "Default"
+// see https://github.com/Lilianne-Blaze/rustdesk/commit/7135bfe813cc49990e7bd1bb6312997c7b2afd1c
+
 use super::{CursorData, ResultType};
 use crate::{
     common::PORTABLE_APPNAME_RUNTIME_ENV_KEY,

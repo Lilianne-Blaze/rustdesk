@@ -1,3 +1,8 @@
+
+// LBCODE changes:
+// added version info
+// see https://github.com/Lilianne-Blaze/rustdesk/commit/d4a98745a35e008d586ee32ccd69b7e1dbd475ab
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';

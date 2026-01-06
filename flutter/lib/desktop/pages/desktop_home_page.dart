@@ -131,7 +131,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     return ChangeNotifierProvider.value(
       value: gFFI.serverModel,
       child: Container(
-        width: isIncomingOnly ? 280.0 : 200.0,
+        // LBCODE changed: increase width from 200 to 220 for longer IDs
+        width: isIncomingOnly ? 280.0 : 220.0,
         color: Theme.of(context).colorScheme.background,
         child: Stack(
           children: [
@@ -215,7 +216,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                         Text(
                           translate("ID"),
                           style: TextStyle(
-                              fontSize: 14,
+                              //LBCODE changed: decrease font size slightly from 14 to 12
+                              fontSize: 12,
                               color: Theme.of(context)
                                   .textTheme
                                   .titleLarge
