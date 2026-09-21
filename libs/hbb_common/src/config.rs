@@ -574,10 +574,18 @@ pub fn load_path<T: serde::Serialize + serde::de::DeserializeOwned + Default + s
 }
 
 #[inline]
+// Writes `cfg` to disk at `path` as TOML text via the `confy` crate (this is the
+// actual file-write step; `Config::store()` below builds the in-memory struct that
+// gets passed here). `T: serde::Serialize` means any struct that knows how to turn
+// itself into TOML/JSON can be passed in - `password_security`'s encrypt functions
+// have already turned secrets into ciphertext strings by the time we get here, so
+// what lands on disk for those fields is already unreadable without the key.
 pub fn store_path<T: serde::Serialize>(path: PathBuf, cfg: T) -> crate::ResultType<()> {
     #[cfg(not(windows))]
     {
         use std::os::unix::fs::PermissionsExt;
+        // 0o600 = read/write for the file owner only (no group/other access),
+        // restricting who on the machine can even open the config file.
         Ok(confy::store_path_perms(
             path,
             cfg,
@@ -591,6 +599,12 @@ pub fn store_path<T: serde::Serialize>(path: PathBuf, cfg: T) -> crate::ResultTy
 }
 
 impl Config {
+
+    // Reads and parses one config file (main config when `suffix` is empty, or a
+    // side config file like the `_local` one otherwise) back into a Rust struct.
+    // This is the raw file-read step; it does NOT decrypt anything itself - fields
+    // that were encrypted before saving still hold ciphertext right after this call,
+    // and get decrypted afterwards in `load()`/wherever they're read.
     fn load_<T: serde::Serialize + serde::de::DeserializeOwned + Default + std::fmt::Debug>(
         suffix: &str,
     ) -> T {
@@ -609,6 +623,10 @@ impl Config {
         }
     }
 
+    // Entry point for reading the main config file at startup. Order of operations:
+    // 1) parse the raw TOML file into a `Config` struct (still-encrypted fields as-is)
+    // 2) decrypt the permanent password / device ID fields in place
+    // 3) if anything needed upgrading/re-encrypting/regenerating, write the file back
     fn load() -> Config {
         let mut config = Config::load_::<Config>("");
         let mut store = false;
@@ -653,6 +671,11 @@ impl Config {
         config
     }
 
+    // Only handles the *permanent* password field (the one the user sets to always
+    // allow a connection). This can hold either plaintext, a reversible encrypted
+    // string (from `encrypt_str_or_original`), or a one-way salted hash - this
+    // function figures out which case it is and, if encrypted, decrypts it in place
+    // so the rest of the app can just read `config.password` as plain text.
     fn validate_or_decrypt_permanent_password_storage(config: &mut Config) -> Result<()> {
         if config.password.is_empty() {
             return Ok(());
@@ -699,6 +722,9 @@ impl Config {
         }
     }
 
+    // Runs right before writing the config to disk: makes sure the permanent
+    // password field is in a valid state, clearing it out instead of saving
+    // corrupt/undecryptable data if something is wrong (fail safe, not fail open).
     fn prepare_config_for_store(config: &mut Config) {
         match Self::validate_or_decrypt_permanent_password_storage(config) {
             Ok(_) => {}
@@ -715,6 +741,9 @@ impl Config {
         }
     }
 
+    // Entry point for writing the main config file. Takes the in-memory config
+    // (plaintext password/id), encrypts the sensitive fields, then hands the result
+    // to `store_`/`store_path` above to actually write TOML to disk.
     fn store(&self) {
         let mut config = self.clone();
         Self::prepare_config_for_store(&mut config);
@@ -728,6 +757,9 @@ impl Config {
         let (stored_id, encrypted, _) =
             decrypt_str_or_original(&config.enc_id, PASSWORD_ENC_VERSION);
         if !encrypted || stored_id != config.id {
+            // `enc_id` is the encrypted copy of the device ID that actually gets saved
+            // to disk; `id` itself is cleared right after (see below) so the plaintext
+            // ID never ends up in config.toml.
             config.enc_id =
                 encrypt_str_or_original(&config.id, PASSWORD_ENC_VERSION, ENCRYPT_MAX_LEN);
         }

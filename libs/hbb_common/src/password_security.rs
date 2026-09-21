@@ -114,6 +114,10 @@ fn is_encrypted(v: &[u8]) -> bool {
     }
 }
 
+// Called on a config field's value before writing it to disk. Encrypts and adds
+// the "00" version prefix (see VERSION_LEN/FORMAT_V1 above) if `version == "00"`,
+// otherwise (or if encryption fails) returns the value unchanged - so config
+// fields can end up either encrypted-with-prefix or plain, depending on version.
 pub fn encrypt_str_or_original(s: &str, version: &str, max_len: usize) -> String {
     if is_encrypted(s.as_bytes()) {
         log::error!("Duplicate encryption!");
@@ -130,9 +134,13 @@ pub fn encrypt_str_or_original(s: &str, version: &str, max_len: usize) -> String
     s.to_owned()
 }
 
-// String: password
-// bool: whether decryption is successful
-// bool: whether should store to re-encrypt when load
+// Called on a config field's value right after reading it from disk. If `s` starts
+// with the "00" prefix, decrypts it; otherwise assumes it was never encrypted (e.g.
+// an old config file from before encryption was added) and returns it as-is.
+// Returns a 3-tuple, since Rust functions can return multiple values at once:
+//   1. the resulting string (decrypted plaintext, or the original if not encrypted)
+//   2. whether decryption actually happened (true) vs. value was left unchanged (false)
+//   3. whether the caller should re-save this field (e.g. to upgrade its encryption)
 // note: s.len() return length in bytes, s.chars().count() return char count
 //       &[..2] return the left 2 bytes, s.chars().take(2) return the left 2 chars
 pub fn decrypt_str_or_original(s: &str, current_version: &str) -> (String, bool, bool) {
@@ -157,6 +165,9 @@ pub fn decrypt_str_or_original(s: &str, current_version: &str) -> (String, bool,
     )
 }
 
+// Same idea as `encrypt_str_or_original`/`decrypt_str_or_original` above, but for
+// raw bytes (`Vec<u8>`) instead of text - used for config fields that store binary
+// data (e.g. the saved-devices list) rather than a plain string.
 pub fn encrypt_vec_or_original(v: &[u8], version: &str, max_len: usize) -> Vec<u8> {
     if is_encrypted(v) {
         log::error!("Duplicate encryption!");
@@ -193,6 +204,9 @@ pub fn decrypt_vec_or_original(v: &[u8], current_version: &str) -> (Vec<u8>, boo
     (v.to_owned(), false, !v.is_empty() && !is_encrypted(v))
 }
 
+// Low-level "encrypt these bytes" step used by both `encrypt_str_or_original` and
+// `encrypt_vec_or_original`: runs the actual cipher (`symmetric_crypt`, below) and
+// then base64-encodes the ciphertext so it's safe to store as plain TOML text.
 fn encrypt(v: &[u8]) -> Result<String, ()> {
     if !v.is_empty() {
         symmetric_crypt(v, true).map(|v| base64::encode(v, base64::Variant::Original))
@@ -201,6 +215,7 @@ fn encrypt(v: &[u8]) -> Result<String, ()> {
     }
 }
 
+// Reverse of `encrypt` above: base64-decode, then run the cipher in decrypt mode.
 fn decrypt(v: &[u8]) -> Result<Vec<u8>, ()> {
     if !v.is_empty() {
         base64::decode(v, base64::Variant::Original).and_then(|v| symmetric_crypt(&v, false))
@@ -209,16 +224,26 @@ fn decrypt(v: &[u8]) -> Result<Vec<u8>, ()> {
     }
 }
 
+// The actual cipher: this is the only place that touches the encryption key and the
+// `secretbox` algorithm (XSalsa20-Poly1305, an authenticated cipher - it both hides
+// the data and lets decryption detect if it was tampered with or the key is wrong).
+// `encrypt: bool` picks the direction; everything above this function only ever
+// deals with strings/bytes and never the key or cipher details directly.
 pub fn symmetric_crypt(data: &[u8], encrypt: bool) -> Result<Vec<u8>, ()> {
     use sodiumoxide::crypto::secretbox;
     use std::convert::TryInto;
 
     let uuid = crate::get_uuid();
+    // secretbox keys must be exactly KEYBYTES long; resize pads with zeros if our
+    // key material is shorter, or truncates it if longer.
     let mut keybuf = uuid.clone();
     keybuf.resize(secretbox::KEYBYTES, 0);
     let key = secretbox::Key(keybuf.try_into().map_err(|_| ())?);
 
     if encrypt {
+        // A nonce is a random "salt" value that must never be reused with the same
+        // key; it's stored alongside the ciphertext (not secret) so decryption can
+        // use the same one. `gen_nonce()` picks a fresh random one each time we encrypt.
         let nonce = secretbox::gen_nonce();
         let encrypted = secretbox::seal(data, &nonce, &key);
         let mut output = Vec::with_capacity(1 + nonce.0.len() + encrypted.len());
@@ -245,6 +270,11 @@ pub fn symmetric_crypt(data: &[u8], encrypt: bool) -> Result<Vec<u8>, ()> {
     }
 }
 
+// Undoes `secretbox::seal` above: pulls the nonce back out of the front of `data`,
+// then asks sodiumoxide to verify+decrypt with it. Returns `Err(())` (no details)
+// if the ciphertext doesn't match the key/nonce - i.e. wrong key or corrupted data;
+// also tries the older, pre-versioned on-disk format (`legacy_nonce`) as a fallback,
+// so config files saved by older RustDesk versions still decrypt correctly.
 fn open_secretbox_payload(data: &[u8], key: &secretbox::Key) -> Result<Vec<u8>, ()> {
     if data.first() == Some(&FORMAT_V1)
         && data.len() >= 1 + secretbox::NONCEBYTES + secretbox::MACBYTES
