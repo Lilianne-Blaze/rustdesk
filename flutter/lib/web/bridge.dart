@@ -1612,6 +1612,11 @@ class RustdeskImpl {
     return mainGetAppNameSync(hint: hint) != "RustDesk";
   }
 
+  bool mainIsAutoUpdateDisabled({dynamic hint}) {
+    // Web has no auto-updater; never disabled.
+    return false;
+  }
+
   bool isDisableSettings({dynamic hint}) {
     // Checks HARD_SETTINGS["disable-settings"] == "Y"
     return mainGetHardOption(key: "disable-settings", hint: hint) == "Y";

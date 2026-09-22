@@ -486,6 +486,7 @@ class _GeneralState extends State<_General> {
     final incomingOnly = bind.isIncomingOnly();
     final outgoingOnly = bind.isOutgoingOnly();
     final showAutoUpdate = isWindows && bind.mainIsInstalled();
+    final autoUpdateDisabled = bind.mainIsAutoUpdateDisabled();
     final children = <Widget>[
       if (!isWeb && !incomingOnly)
         _OptionCheckBox(context, 'Confirm before closing multiple tabs',
@@ -550,6 +551,7 @@ class _GeneralState extends State<_General> {
           'Check for software update on startup',
           kOptionEnableCheckUpdate,
           isServer: false,
+          enabled: !autoUpdateDisabled,
         ),
       if (showAutoUpdate)
         _OptionCheckBox(
@@ -557,6 +559,7 @@ class _GeneralState extends State<_General> {
           'Auto update',
           kOptionAllowAutoUpdate,
           isServer: true,
+          enabled: !autoUpdateDisabled,
         ),
       if (isWindows && !outgoingOnly)
         _OptionCheckBox(

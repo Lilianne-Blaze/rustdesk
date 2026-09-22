@@ -2476,6 +2476,10 @@ pub fn is_custom_client() -> SyncReturn<bool> {
     SyncReturn(crate::common::is_custom_client())
 }
 
+pub fn main_is_auto_update_disabled() -> SyncReturn<bool> {
+    SyncReturn(crate::common::is_auto_update_disabled())
+}
+
 pub fn is_disable_settings() -> SyncReturn<bool> {
     SyncReturn(config::is_disable_settings())
 }

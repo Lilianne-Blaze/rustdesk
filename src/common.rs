@@ -938,7 +938,15 @@ pub fn is_modifier(evt: &KeyEvent) -> bool {
     }
 }
 
+pub fn is_auto_update_disabled() -> bool {
+    // WARNING: Auto-update is forcibly disabled for now.
+    return true;
+}
+
 pub fn check_software_update() {
+    if is_auto_update_disabled() {
+        return;
+    }
     if is_custom_client() {
         return;
     }
