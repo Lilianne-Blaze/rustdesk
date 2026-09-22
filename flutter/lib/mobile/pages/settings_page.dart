@@ -594,6 +594,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
         }));
 
     if (!bind.isCustomClient()) {
+      final autoUpdateDisabled = bind.mainIsAutoUpdateDisabled();
       enhancementsTiles.add(
         SettingsTile.switchTile(
           initialValue: _checkUpdateOnStartup,
@@ -601,6 +602,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(translate('Check for software update on startup')),
           ]),
+          enabled: !autoUpdateDisabled,
           onToggle: (bool toValue) async {
             await mainSetLocalBoolOption(kOptionEnableCheckUpdate, toValue);
             setState(() => _checkUpdateOnStartup = toValue);
