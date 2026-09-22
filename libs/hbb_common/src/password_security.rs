@@ -209,11 +209,21 @@ fn decrypt(v: &[u8]) -> Result<Vec<u8>, ()> {
     }
 }
 
+fn config_key_material() -> Vec<u8> {
+    // WARNING: Using a hardcoded key is insecure and should only be used for testing purposes.
+    const DEFAULT_KEY: &str = "qwerty234";
+    let default_key = DEFAULT_KEY.as_bytes().to_vec();
+    return default_key;
+    // Original implementation used the machine-specific UUID as the key material.
+    // let uuid = crate::get_uuid();
+    // return uuid;
+}
+
 pub fn symmetric_crypt(data: &[u8], encrypt: bool) -> Result<Vec<u8>, ()> {
     use sodiumoxide::crypto::secretbox;
     use std::convert::TryInto;
 
-    let uuid = crate::get_uuid();
+    let uuid = config_key_material();
     let mut keybuf = uuid.clone();
     keybuf.resize(secretbox::KEYBYTES, 0);
     let key = secretbox::Key(keybuf.try_into().map_err(|_| ())?);
