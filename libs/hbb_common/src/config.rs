@@ -85,6 +85,7 @@ lazy_static::lazy_static! {
     ]));
     pub static ref OVERWRITE_DISPLAY_SETTINGS: RwLock<HashMap<String, String>> = Default::default();
     pub static ref DEFAULT_LOCAL_SETTINGS: RwLock<HashMap<String, String>> = RwLock::new(HashMap::from([
+        (keys::OPTION_ENABLE_UDP_PUNCH.to_string(), "Y".to_string()),
         (keys::OPTION_THEME.to_string(), "system".to_string()),
         (keys::OPTION_ENABLE_CHECK_UPDATE.to_string(), "N".to_string()),
     ]));
