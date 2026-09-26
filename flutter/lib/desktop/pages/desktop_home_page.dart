@@ -919,12 +919,22 @@ void setPasswordDialog({VoidCallback? notEmptyCallback}) async {
   final presetPassword = permanentPasswordSet && !localPasswordSet;
   var canSubmit = false;
   final RxString rxPass = "".obs;
-  final rules = [
+  // default rules
+  /*final rules = [
     DigitValidationRule(),
     UppercaseValidationRule(),
     LowercaseValidationRule(),
     // SpecialCharacterValidationRule(),
     MinCharactersValidationRule(8),
+  ];*/
+  // minimal rules
+  final rules = [
+    //DigitValidationRule(),
+    //UppercaseValidationRule(),
+    //LowercaseValidationRule(),
+    // SpecialCharacterValidationRule(),
+    //MinCharactersValidationRule(8),
+    MinCharactersValidationRule(6),
   ];
   final maxLength = bind.mainMaxEncryptLen();
   final statusTip = localPasswordSet
