@@ -225,8 +225,8 @@ pub struct Config {
         deserialize_with = "deserialize_string"
     )]
     pub id: String, // use
-    #[serde(default, deserialize_with = "deserialize_string")]
-    enc_id: String, // store
+    #[serde(default, deserialize_with = "deserialize_string", skip_serializing)]
+    enc_id: String, // legacy encrypted storage; new configs persist `id` directly
     #[serde(default, deserialize_with = "deserialize_string")]
     password: String,
     #[serde(default, deserialize_with = "deserialize_string")]
@@ -627,11 +627,11 @@ impl Config {
             log::error!("Failed to validate or decrypt permanent password storage: {err}");
         }
         let mut id_valid = false;
-        let (id, encrypted, store2) = decrypt_str_or_original(&config.enc_id, PASSWORD_ENC_VERSION);
+        let (id, encrypted, _) = decrypt_str_or_original(&config.enc_id, PASSWORD_ENC_VERSION);
         if encrypted {
             config.id = id;
             id_valid = true;
-            store |= store2;
+            store = true;
         } else if
         // Comment out for forward compatible
         // crate::get_modified_time(&Self::file_(""))
@@ -640,12 +640,12 @@ impl Config {
         // < crate::get_exe_time()
         // &&
         !config.id.is_empty()
-            && config.enc_id.is_empty()
             && !decrypt_str_or_original(&config.id, PASSWORD_ENC_VERSION).1
         {
             id_valid = true;
-            store = true;
+            store |= !config.enc_id.is_empty();
         }
+        config.enc_id.clear();
         if !id_valid {
             log::warn!("ID is invalid, generating new one");
             for _ in 0..3 {
@@ -736,13 +736,7 @@ impl Config {
             config.password =
                 keep_encrypted_storage_if_plaintext_unchanged(&config.password, &stored.password);
         }
-        let (stored_id, encrypted, _) =
-            decrypt_str_or_original(&config.enc_id, PASSWORD_ENC_VERSION);
-        if !encrypted || stored_id != config.id {
-            config.enc_id =
-                encrypt_str_or_original(&config.id, PASSWORD_ENC_VERSION, ENCRYPT_MAX_LEN);
-        }
-        config.id = "".to_owned();
+        config.enc_id.clear();
         Config::store_(&config, "");
     }
 
@@ -1667,7 +1661,8 @@ impl Config {
 
     // TODO: `Config::set()` does not invalidate trusted devices when permanent password/salt changes.
     // This matches historical behavior, but may need revisiting in a separate PR.
-    pub fn set(cfg: Config) -> bool {
+    pub fn set(mut cfg: Config) -> bool {
+        cfg.enc_id.clear();
         let mut lock = CONFIG.write().unwrap();
         if *lock == cfg {
             return false;
@@ -3536,40 +3531,39 @@ mod tests {
     }
 
     #[test]
-    fn test_store_keeps_existing_enc_id_when_id_is_unchanged() {
+    fn test_store_persists_id_as_plaintext() {
+        let _guard = CONFIG_STATE_TEST_LOCK.lock().unwrap();
+        let _file_guard = ConfigFileRestoreGuard::new(Config::file());
+        let _state_guard = ConfigStateTestGuard::new(Config::default(), HashMap::new());
         let mut cfg = Config::default();
         cfg.id = "123456789".to_owned();
         cfg.enc_id = encrypt_str_or_original(&cfg.id, PASSWORD_ENC_VERSION, ENCRYPT_MAX_LEN);
-        let original_enc_id = cfg.enc_id.clone();
 
-        with_config_and_hard_settings(Config::default(), HashMap::new(), || {
-            assert!(Config::set(cfg));
+        assert!(Config::set(cfg));
 
-            assert_eq!(Config::load().enc_id, original_enc_id);
-            assert_eq!(Config::get().id, "123456789");
-        });
+        let stored = fs::read_to_string(Config::file()).unwrap();
+        assert!(stored.contains("id = \"123456789\""));
+        assert!(!stored.contains("enc_id"));
+        let raw = Config::load_::<Config>("");
+        assert_eq!(raw.id, "123456789");
+        assert!(raw.enc_id.is_empty());
+        assert!(Config::get().enc_id.is_empty());
     }
 
     #[test]
-    fn test_store_rewrites_enc_id_when_id_changes() {
-        let original_id = "123456789";
-        let updated_id = "987654321";
-        let mut cfg = Config::default();
-        cfg.id = updated_id.to_owned();
-        let original_enc_id =
-            encrypt_str_or_original(original_id, PASSWORD_ENC_VERSION, ENCRYPT_MAX_LEN);
-        cfg.enc_id = original_enc_id.clone();
+    fn test_load_migrates_legacy_encrypted_id_to_plaintext() {
+        let _guard = CONFIG_STATE_TEST_LOCK.lock().unwrap();
+        let _file_guard = ConfigFileRestoreGuard::new(Config::file());
+        let legacy_id = encrypt_str_or_original("123456789", PASSWORD_ENC_VERSION, ENCRYPT_MAX_LEN);
+        fs::write(Config::file(), format!("enc_id = {legacy_id:?}\n")).unwrap();
 
-        with_config_and_hard_settings(Config::default(), HashMap::new(), || {
-            assert!(Config::set(cfg));
+        let loaded = Config::load();
 
-            let stored = Config::load().enc_id;
-            let (stored_id, encrypted, _) = decrypt_str_or_original(&stored, PASSWORD_ENC_VERSION);
-            assert_ne!(stored, original_enc_id);
-            assert!(encrypted);
-            assert_eq!(stored_id, updated_id);
-            assert_eq!(Config::get().id, updated_id);
-        });
+        assert_eq!(loaded.id, "123456789");
+        assert!(loaded.enc_id.is_empty());
+        let stored = fs::read_to_string(Config::file()).unwrap();
+        assert!(stored.contains("id = \"123456789\""));
+        assert!(!stored.contains("enc_id"));
     }
 
     #[test]
