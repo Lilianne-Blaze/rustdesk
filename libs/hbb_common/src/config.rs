@@ -524,11 +524,11 @@ impl Config2 {
                 .map(|socks| socks.password.as_str())
                 .unwrap_or_default();
             socks.password =
-                keep_encrypted_storage_if_plaintext_unchanged(&socks.password, stored_password);
+                preserve_storage_format(&socks.password, stored_password, ENCRYPT_MAX_LEN);
             config.socks = Some(socks);
         }
         config.unlock_pin =
-            keep_encrypted_storage_if_plaintext_unchanged(&config.unlock_pin, &stored.unlock_pin);
+            preserve_storage_format(&config.unlock_pin, &stored.unlock_pin, ENCRYPT_MAX_LEN);
         Config::store_(&config, "2");
     }
 
@@ -547,12 +547,34 @@ impl Config2 {
     }
 }
 
-fn keep_encrypted_storage_if_plaintext_unchanged(plain: &str, stored: &str) -> String {
-    let (stored_plain, encrypted, _) = decrypt_str_or_original(stored, PASSWORD_ENC_VERSION);
-    if encrypted && stored_plain == plain {
-        return stored.to_owned();
+fn preserve_storage_format(plain: &str, stored: &str, max_len: usize) -> String {
+    let (stored_plain, encrypted, should_store) =
+        decrypt_str_or_original(stored, PASSWORD_ENC_VERSION);
+    if encrypted {
+        if stored_plain == plain {
+            return stored.to_owned();
+        }
+        return encrypt_str_or_original(plain, PASSWORD_ENC_VERSION, max_len);
     }
-    encrypt_str_or_original(plain, PASSWORD_ENC_VERSION, ENCRYPT_MAX_LEN)
+    if should_store {
+        return plain.to_owned();
+    }
+    encrypt_str_or_original(plain, PASSWORD_ENC_VERSION, max_len)
+}
+
+fn preserve_vec_storage_format(plain: &[u8], stored: &[u8], max_len: usize) -> Vec<u8> {
+    let (stored_plain, encrypted, should_store) =
+        decrypt_vec_or_original(stored, PASSWORD_ENC_VERSION);
+    if encrypted {
+        if stored_plain == plain {
+            return stored.to_owned();
+        }
+        return encrypt_vec_or_original(plain, PASSWORD_ENC_VERSION, max_len);
+    }
+    if should_store {
+        return plain.to_owned();
+    }
+    encrypt_vec_or_original(plain, PASSWORD_ENC_VERSION, max_len)
 }
 
 pub fn load_path<T: serde::Serialize + serde::de::DeserializeOwned + Default + std::fmt::Debug>(
@@ -630,10 +652,9 @@ impl Config {
         // &&
         !config.id.is_empty()
             && config.enc_id.is_empty()
-            && !decrypt_str_or_original(&config.id, PASSWORD_ENC_VERSION).1
+            && decrypt_str_or_original(&config.id, PASSWORD_ENC_VERSION).2
         {
             id_valid = true;
-            store = true;
         }
         if !id_valid {
             log::warn!("ID is invalid, generating new one");
@@ -718,20 +739,30 @@ impl Config {
     fn store(&self) {
         let mut config = self.clone();
         Self::prepare_config_for_store(&mut config);
+        let stored_config = Config::load_::<Config>("");
         if !config.password.is_empty()
             && decode_permanent_password_h1_from_storage(&config.password).is_none()
         {
-            let stored = Config::load_::<Config>("");
-            config.password =
-                keep_encrypted_storage_if_plaintext_unchanged(&config.password, &stored.password);
+            config.password = preserve_storage_format(
+                &config.password,
+                &stored_config.password,
+                ENCRYPT_MAX_LEN,
+            );
         }
-        let (stored_id, encrypted, _) =
-            decrypt_str_or_original(&config.enc_id, PASSWORD_ENC_VERSION);
-        if !encrypted || stored_id != config.id {
-            config.enc_id =
-                encrypt_str_or_original(&config.id, PASSWORD_ENC_VERSION, ENCRYPT_MAX_LEN);
+        let legacy_plaintext_id = stored_config.enc_id.is_empty()
+            && !stored_config.id.is_empty()
+            && decrypt_str_or_original(&stored_config.id, PASSWORD_ENC_VERSION).2;
+        if legacy_plaintext_id {
+            config.enc_id.clear();
+        } else {
+            let (stored_id, encrypted, _) =
+                decrypt_str_or_original(&config.enc_id, PASSWORD_ENC_VERSION);
+            if !encrypted || stored_id != config.id {
+                config.enc_id =
+                    encrypt_str_or_original(&config.id, PASSWORD_ENC_VERSION, ENCRYPT_MAX_LEN);
+            }
+            config.id.clear();
         }
-        config.id = "".to_owned();
         Config::store_(&config, "");
     }
 
@@ -1603,7 +1634,7 @@ impl Config {
         }
         let devices = CONFIG2.read().unwrap().trusted_devices.clone();
         let (devices, succ, store) = decrypt_str_or_original(&devices, PASSWORD_ENC_VERSION);
-        if succ {
+        if succ || store {
             let mut devices: Vec<TrustedDevice> =
                 serde_json::from_str(&devices).unwrap_or_default();
             let len = devices.len();
@@ -1626,8 +1657,8 @@ impl Config {
             log::error!("Trusted devices too large: {}", devices.bytes().len());
             return;
         }
-        let devices = encrypt_str_or_original(&devices, PASSWORD_ENC_VERSION, max_len);
         let mut config = CONFIG2.write().unwrap();
+        let devices = preserve_storage_format(&devices, &config.trusted_devices, max_len);
         config.trusted_devices = devices;
         config.store();
         *TRUSTED_DEVICES.write().unwrap() = (trusted_devices, true);
@@ -1744,11 +1775,16 @@ impl PeerConfig {
 
     fn store_(&self, id: &str) {
         let mut config = self.clone();
-        config.password =
-            encrypt_vec_or_original(&config.password, PASSWORD_ENC_VERSION, ENCRYPT_MAX_LEN);
+        let stored = load_path::<PeerConfig>(Self::path(id));
+        config.password = preserve_vec_storage_format(
+            &config.password,
+            &stored.password,
+            ENCRYPT_MAX_LEN,
+        );
         for opt in ["rdp_password", "os-username", "os-password"] {
             if let Some(v) = config.options.get_mut(opt) {
-                *v = encrypt_str_or_original(v, PASSWORD_ENC_VERSION, ENCRYPT_MAX_LEN)
+                let stored_value = stored.options.get(opt).map(String::as_str).unwrap_or_default();
+                *v = preserve_storage_format(v, stored_value, ENCRYPT_MAX_LEN);
             }
         }
         if let Err(err) = store_path(Self::path(id), config) {
@@ -3353,6 +3389,74 @@ mod tests {
         let cfg: PeerConfig = Default::default();
         let res = toml::to_string_pretty(&cfg);
         assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_preserve_storage_format_retains_plaintext_and_encrypted_modes() {
+        let plaintext = "original-secret";
+        assert_eq!(
+            preserve_storage_format("updated-secret", plaintext, ENCRYPT_MAX_LEN),
+            "updated-secret"
+        );
+
+        let encrypted = encrypt_str_or_original(plaintext, PASSWORD_ENC_VERSION, ENCRYPT_MAX_LEN);
+        assert_eq!(
+            preserve_storage_format(plaintext, &encrypted, ENCRYPT_MAX_LEN),
+            encrypted
+        );
+        let updated = preserve_storage_format("updated-secret", &encrypted, ENCRYPT_MAX_LEN);
+        let (decrypted, success, _) = decrypt_str_or_original(&updated, PASSWORD_ENC_VERSION);
+        assert!(success);
+        assert_eq!(decrypted, "updated-secret");
+
+        assert_eq!(
+            preserve_vec_storage_format(b"updated-secret", b"original-secret", ENCRYPT_MAX_LEN)
+                .as_slice(),
+            b"updated-secret"
+        );
+    }
+
+    #[test]
+    fn test_store_keeps_plaintext_id_plaintext() {
+        let _guard = CONFIG_STATE_TEST_LOCK.lock().unwrap();
+        let _file_guard = ConfigFileRestoreGuard::new(Config::file_(""));
+        let mut stored = Config::default();
+        stored.id = "123456789".to_owned();
+        store_path(Config::file_(""), stored).unwrap();
+
+        let mut config = Config::load();
+        assert_eq!(config.id, "123456789");
+        config.id = "987654321".to_owned();
+        config.store();
+
+        let stored = load_path::<Config>(Config::file_(""));
+        assert_eq!(stored.id, "987654321");
+        assert!(stored.enc_id.is_empty());
+    }
+
+    #[test]
+    fn test_peer_store_keeps_plaintext_secrets_plaintext() {
+        let _guard = CONFIG_STATE_TEST_LOCK.lock().unwrap();
+        let id = "test-plaintext-peer-config-storage";
+        let _file_guard = ConfigFileRestoreGuard::new(PeerConfig::path(id));
+        let mut config = PeerConfig::default();
+        config.password = b"original-password".to_vec();
+        config.options.insert(
+            "rdp_password".to_owned(),
+            "original-rdp-password".to_owned(),
+        );
+        store_path(PeerConfig::path(id), config.clone()).unwrap();
+
+        config.password = b"updated-password".to_vec();
+        config.options.insert(
+            "rdp_password".to_owned(),
+            "updated-rdp-password".to_owned(),
+        );
+        config.store(id);
+
+        let stored = load_path::<PeerConfig>(PeerConfig::path(id));
+        assert_eq!(stored.password.as_slice(), b"updated-password");
+        assert_eq!(stored.options["rdp_password"], "updated-rdp-password");
     }
 
     #[test]
