@@ -29,6 +29,12 @@ macro_rules! my_println{
 /// If it returns [`Some`], then the process will continue, and flutter gui will be started.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn core_main() -> Option<Vec<String>> {
+    // Must run before anything reads the config, so its first save already includes these.
+    config::Config::set_exe_info(
+        crate::VERSION,
+        crate::BUILD_DATE,
+        crate::BUILD_DATE_MILLIS,
+    );
     if !crate::common::global_init() {
         return None;
     }

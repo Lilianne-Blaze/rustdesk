@@ -57,10 +57,23 @@ lazy_static::lazy_static! {
     pub static ref ORG: RwLock<String> = RwLock::new("com.carriez".to_owned());
 }
 
+/// Used with `#[serde(skip_serializing_if = "is_zero_i64")]` to leave a number out of the file
+/// when it's 0 (i.e. unknown).
+fn is_zero_i64(v: &i64) -> bool {
+    *v == 0
+}
+
+/// `Config::load` skips its startup save if the file was saved less than this long ago.
+const RECENT_SAVE_SKIP_WINDOW: Duration = Duration::from_secs(10);
+
 type Size = (i32, i32, i32, i32);
 type KeyPair = (Vec<u8>, Vec<u8>);
 
 lazy_static::lazy_static! {
+    // Version and build date of the running executable, as
+    // (version, build_date, build_date_millis).
+    // Set once at startup by `Config::set_exe_info`; written to the config file by `Config::store`.
+    static ref EXE_INFO: RwLock<(String, String, i64)> = Default::default();
     static ref CONFIG: RwLock<Config> = RwLock::new(Config::load());
     static ref CONFIG2: RwLock<Config2> = RwLock::new(Config2::load());
     static ref LOCAL_CONFIG: RwLock<LocalConfig> = RwLock::new(LocalConfig::load());
@@ -237,6 +250,31 @@ pub struct Config {
     key_confirmed: bool,
     #[serde(default, deserialize_with = "deserialize_hashmap_string_bool")]
     keys_confirmed: HashMap<String, bool>,
+    // Information for external tools, e.g. to tell which of two copies of this file is newer,
+    // or whether it changed since they last looked. RustDesk itself never reads these back.
+    //
+    // They are filled in by `Config::store` each time the file is written, from
+    // `Config::set_exe_info` and the current time. `skip_deserializing` means they are
+    // ignored when a config is read (from the file, or sent from another RustDesk process),
+    // so in memory they are always empty/0. That keeps them out of comparisons like
+    // `Config::set`'s `*lock == cfg`, which would otherwise see every process's config as
+    // "different" and write it needlessly.
+    //
+    // Example: exe_version = "1.4.9",
+    // exe_build_date = "2026-09-28 09:15" (build machine's local time, no time zone),
+    // exe_build_date_millis = 1790586900000 (the same moment as Unix epoch milliseconds),
+    // config_save_time_millis = 1790685296789 (Unix epoch milliseconds),
+    // config_save_time_iso8601 = "2026-09-29T12:34:56.789Z" (the same time as UTC text).
+    #[serde(default, skip_deserializing, skip_serializing_if = "String::is_empty")]
+    exe_version: String,
+    #[serde(default, skip_deserializing, skip_serializing_if = "String::is_empty")]
+    exe_build_date: String,
+    #[serde(default, skip_deserializing, skip_serializing_if = "is_zero_i64")]
+    exe_build_date_millis: i64,
+    #[serde(default, skip_deserializing)]
+    config_save_time_millis: i64,
+    #[serde(default, skip_deserializing)]
+    config_save_time_iso8601: String,
 }
 
 #[derive(Debug, Default, PartialEq, Serialize, Deserialize, Clone)]
@@ -620,6 +658,23 @@ impl Config {
         }
     }
 
+    /// Whether the config file's `config_save_time_millis` is less than
+    /// `RECENT_SAVE_SKIP_WINDOW` in the past. Used by `Config::load`.
+    fn saved_recently() -> bool {
+        // `Config` itself ignores the save time when reading (see `config_save_time_millis`),
+        // so read just that one value from the file with this small helper struct.
+        #[derive(Debug, Default, Serialize, Deserialize)]
+        struct SaveTimeOnly {
+            #[serde(default)]
+            config_save_time_millis: i64,
+        }
+        let saved = Config::load_::<SaveTimeOnly>("").config_save_time_millis;
+        let age_millis = chrono::Utc::now().timestamp_millis() - saved;
+        // A negative age means the save time is in the future (e.g. the clock was moved back);
+        // don't trust it, so it doesn't count as recent.
+        (0..RECENT_SAVE_SKIP_WINDOW.as_millis() as i64).contains(&age_millis)
+    }
+
     fn load() -> Config {
         let mut config = Config::load_::<Config>("");
         let mut store = false;
@@ -646,6 +701,18 @@ impl Config {
             store |= !config.enc_id.is_empty();
         }
         config.enc_id.clear();
+        // Save once when the config is first loaded, so the file records the current
+        // executable version/build date and a fresh save time each time a RustDesk process
+        // starts (see `exe_version` etc. in `Config`). `load` runs only once per process.
+        //
+        // Skip this if the file was saved very recently, usually by another RustDesk process
+        // that just started. Several processes start together (e.g. at boot), and each save
+        // here writes back the config as it was read a moment ago; skipping lowers the chance
+        // of overwriting a change another process has just made, like a new key pair.
+        // (Saves needed for the ID migration or a new ID above/below still always happen.)
+        if !Self::saved_recently() {
+            store = true;
+        }
         if !id_valid {
             log::warn!("ID is invalid, generating new one");
             for _ in 0..3 {
@@ -737,7 +804,29 @@ impl Config {
                 keep_encrypted_storage_if_plaintext_unchanged(&config.password, &stored.password);
         }
         config.enc_id.clear();
+        // Stamp the copy being written with the executable info and the current time. Only
+        // the copy (`config`) is changed; the in-memory config (`self`) keeps these empty.
+        let (exe_version, exe_build_date, exe_build_date_millis) =
+            EXE_INFO.read().unwrap().clone();
+        config.exe_version = exe_version;
+        config.exe_build_date = exe_build_date;
+        config.exe_build_date_millis = exe_build_date_millis;
+        let saved_at = chrono::Utc::now();
+        config.config_save_time_millis = saved_at.timestamp_millis();
+        config.config_save_time_iso8601 =
+            saved_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         Config::store_(&config, "");
+    }
+
+    /// Tells the config which executable is running, so every save can record its version
+    /// and build date. Call this first thing at startup, before anything reads the config:
+    /// the first read also saves the file (see `Config::load`).
+    pub fn set_exe_info(version: &str, build_date: &str, build_date_millis: i64) {
+        *EXE_INFO.write().unwrap() = (
+            version.to_owned(),
+            build_date.to_owned(),
+            build_date_millis,
+        );
     }
 
     pub fn file() -> PathBuf {
@@ -3556,7 +3645,6 @@ mod tests {
         let _file_guard = ConfigFileRestoreGuard::new(Config::file());
         let legacy_id = encrypt_str_or_original("123456789", PASSWORD_ENC_VERSION, ENCRYPT_MAX_LEN);
         fs::write(Config::file(), format!("enc_id = {legacy_id:?}\n")).unwrap();
-
         let loaded = Config::load();
 
         assert_eq!(loaded.id, "123456789");
@@ -3564,6 +3652,56 @@ mod tests {
         let stored = fs::read_to_string(Config::file()).unwrap();
         assert!(stored.contains("id = \"123456789\""));
         assert!(!stored.contains("enc_id"));
+    }
+
+    #[test]
+    fn test_store_writes_exe_info_and_save_time_but_reading_ignores_them() {
+        let _guard = CONFIG_STATE_TEST_LOCK.lock().unwrap();
+        let _file_guard = ConfigFileRestoreGuard::new(Config::file());
+        let original_exe_info = EXE_INFO.read().unwrap().clone();
+        Config::set_exe_info("1.4.9", "2026-09-28 09:15", 1790586900000);
+        let mut cfg = Config::default();
+        cfg.id = "123456789".to_owned();
+        cfg.store();
+        *EXE_INFO.write().unwrap() = original_exe_info;
+
+        let stored = fs::read_to_string(Config::file()).unwrap();
+        assert!(stored.contains("exe_version = \"1.4.9\""), "{stored}");
+        assert!(stored.contains("exe_build_date = \"2026-09-28 09:15\""), "{stored}");
+        assert!(stored.contains("exe_build_date_millis = 1790586900000"), "{stored}");
+        assert!(stored.contains("config_save_time_millis = "), "{stored}");
+        assert!(stored.contains("config_save_time_iso8601 = "), "{stored}");
+
+        // Reading must leave them empty, so they never make two configs compare as different.
+        let raw = Config::load_::<Config>("");
+        assert!(raw.exe_version.is_empty());
+        assert!(raw.exe_build_date.is_empty());
+        assert_eq!(raw.exe_build_date_millis, 0);
+        assert_eq!(raw.config_save_time_millis, 0);
+        assert!(raw.config_save_time_iso8601.is_empty());
+    }
+
+    #[test]
+    fn test_saved_recently_checks_config_save_time() {
+        let _guard = CONFIG_STATE_TEST_LOCK.lock().unwrap();
+        let _file_guard = ConfigFileRestoreGuard::new(Config::file());
+        let now = chrono::Utc::now().timestamp_millis();
+        let write_save_time = |millis: i64| {
+            fs::write(
+                Config::file(),
+                format!("config_save_time_millis = {millis}\n"),
+            )
+            .unwrap();
+        };
+
+        write_save_time(now - 1_000); // 1 second ago
+        assert!(Config::saved_recently());
+        write_save_time(now - 3_600_000); // 1 hour ago
+        assert!(!Config::saved_recently());
+        write_save_time(now + 3_600_000); // in the future (clock moved back)
+        assert!(!Config::saved_recently());
+        fs::write(Config::file(), "").unwrap(); // no save time (older file)
+        assert!(!Config::saved_recently());
     }
 
     #[test]
