@@ -238,9 +238,18 @@ pub fn gen_version() {
         }
     }
     // generate build date
-    let build_date = format!("{}", chrono::Local::now().format("%Y-%m-%d %H:%M"));
+    let now = chrono::Local::now();
+    let build_date = format!("{}", now.format("%Y-%m-%d %H:%M"));
     file.write_all(
         format!("#[allow(dead_code)]\npub const BUILD_DATE: &str = \"{build_date}\";\n").as_bytes(),
+    )
+    .ok();
+    // The same moment as `BUILD_DATE`, as Unix epoch milliseconds. Unlike `BUILD_DATE` (local
+    // time without a time zone), this is unambiguous, so it's easy to compare in other tools.
+    let build_date_millis = now.timestamp_millis();
+    file.write_all(
+        format!("#[allow(dead_code)]\npub const BUILD_DATE_MILLIS: i64 = {build_date_millis};\n")
+            .as_bytes(),
     )
     .ok();
     file.sync_all().ok();
